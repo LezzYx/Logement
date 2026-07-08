@@ -212,7 +212,10 @@ def notify_discord(webhook_url: str, item: dict):
         r = requests.post(webhook_url, json=payload, timeout=10)
         r.raise_for_status()
     except requests.RequestException as e:
-        print(f"[!] Échec envoi Discord: {e}", file=sys.stderr)
+        # Ne pas avaler l'erreur : un échec d'envoi de LA notification qui
+        # compte le plus doit remonter comme une panne (comptage d'échecs,
+        # run rouge sur GitHub, email de secours), pas rester silencieux.
+        raise RuntimeError(f"Échec envoi Discord (logement {item.get('id')}): {e}") from e
 
 
 def main():
