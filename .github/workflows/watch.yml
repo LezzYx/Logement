@@ -47,7 +47,18 @@ jobs:
           git config user.email "actions@github.com"
           git add seen_ids.json status.json
           git diff --quiet --cached || git commit -m "update state"
-          git push
+
+          # Retry en cas de conflit de push (deux runs proches dans le temps) :
+          # on récupère les derniers changements distants et on rejoue notre
+          # commit par-dessus avant de retenter, jusqu'à 5 fois.
+          for i in 1 2 3 4 5; do
+            if git push; then
+              break
+            fi
+            echo "Push rejeté (tentative $i/5), on retente après rebase..."
+            git pull --rebase origin main
+            sleep $((RANDOM % 5 + 1))
+          done
 
       - name: Fail the job if the watcher failed
         if: steps.run-watcher.outcome == 'failure'
