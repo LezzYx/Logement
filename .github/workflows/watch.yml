@@ -1,16 +1,26 @@
 name: Crous Watcher
 
 on:
-  schedule:
-    - cron: "*/5 * * * *"   # toutes les 5 minutes
-  workflow_dispatch: {}      # permet de lancer manuellement depuis l'onglet Actions
+  workflow_dispatch: {}      # déclenché par cron-job.org toutes les 5 minutes
+  # Le trigger "schedule" interne a été retiré : il faisait doublon avec
+  # cron-job.org (deux sources déclenchaient le même workflow en parallèle),
+  # ce qui pouvait saturer les runners gratuits GitHub et provoquer des
+  # erreurs "job not acquired".
+
+concurrency:
+  group: crous-watcher
+  cancel-in-progress: false  # on ne coupe pas un run en cours, on met juste
+                              # en attente le suivant plutôt que de les
+                              # laisser tourner en parallèle
 
 permissions:
-  contents: write            # nécessaire pour committer le fichier d'état
+  contents: write
 
 jobs:
   check:
     runs-on: ubuntu-latest
+    timeout-minutes: 3        # évite qu'un run bloqué reste "en cours"
+                               # indéfiniment et bloque toute la file
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -29,7 +39,7 @@ jobs:
           SEARCH_URL: ${{ secrets.SEARCH_URL }}
           DISCORD_WEBHOOK: ${{ secrets.DISCORD_WEBHOOK }}
         run: python crous_watcher.py
-        continue-on-error: true   # on committe l'état même si ce cycle a échoué
+        continue-on-error: true
 
       - name: Commit updated state files
         run: |
@@ -42,3 +52,18 @@ jobs:
       - name: Fail the job if the watcher failed
         if: steps.run-watcher.outcome == 'failure'
         run: exit 1
+
+      - name: Alert Discord on any job failure
+        if: failure()   # se déclenche même si le script n'a jamais démarré
+                         # (ex: "job not acquired", erreur de checkout, etc.)
+        run: |
+          curl -sf -X POST -H "Content-Type: application/json" \
+            -d '{
+              "embeds": [{
+                "title": "⚠️ Crous Watcher : le job a échoué avant/pendant l'\''exécution",
+                "description": "Panne au niveau GitHub Actions (runner non attribué, étape en échec...), indépendante du script. Voir les logs du run pour le détail.",
+                "url": "${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}",
+                "color": 15548997
+              }]
+            }' \
+            "${{ secrets.DISCORD_WEBHOOK }}" || true
